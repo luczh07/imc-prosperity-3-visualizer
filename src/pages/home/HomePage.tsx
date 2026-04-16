@@ -2,6 +2,7 @@ import { Anchor, Code, Container, Stack, Text } from '@mantine/core';
 import { ReactNode } from 'react';
 import { ScrollableCodeHighlight } from '../../components/ScrollableCodeHighlight.tsx';
 import { HomeCard } from './HomeCard.tsx';
+import { LoadFromCsv } from './LoadFromCsv.tsx';
 import { LoadFromFile } from './LoadFromFile.tsx';
 import { LoadFromProsperity } from './LoadFromProsperity.tsx';
 import { LoadFromUrl } from './LoadFromUrl.tsx';
@@ -164,8 +165,8 @@ class Trader:
         <HomeCard title="Welcome!">
           {/* prettier-ignore */}
           <Text>
-            IMC Prosperity 3 Visualizer is a visualizer for <Anchor href="https://prosperity.imc.com/" target="_blank" rel="noreferrer">IMC Prosperity 3</Anchor> algorithms.
-            Its source code is available in the <Anchor href="https://github.com/jmerle/imc-prosperity-3-visualizer" target="_blank" rel="noreferrer">jmerle/imc-prosperity-3-visualizer</Anchor> GitHub repository.
+            IMC Prosperity 4 Visualizer is a visualizer for <Anchor href="https://prosperity.imc.com/" target="_blank" rel="noreferrer">IMC Prosperity 4</Anchor> algorithms.
+            Its source code is available in the <Anchor href="https://github.com/luczh07/imc-prosperity-3-visualizer" target="_blank" rel="noreferrer">luczh07/imc-prosperity-3-visualizer</Anchor> GitHub repository.
             Load an algorithm below to get started.
           </Text>
         </HomeCard>
@@ -181,6 +182,7 @@ class Trader:
         </HomeCard>
 
         <LoadFromFile />
+        <LoadFromCsv />
         <LoadFromProsperity />
         <LoadFromUrl />
       </Stack>

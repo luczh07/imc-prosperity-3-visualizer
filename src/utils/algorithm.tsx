@@ -281,6 +281,196 @@ export function parseAlgorithmLogs(logs: string, summary?: AlgorithmSummary): Al
   };
 }
 
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(reader.result as string));
+    reader.addEventListener('error', () => reject(new Error('FileReader emitted an error event')));
+    reader.readAsText(file);
+  });
+}
+
+export async function parseCsvData(files: File[]): Promise<Algorithm> {
+  const pricesRows: {
+    day: number;
+    timestamp: number;
+    product: string;
+    bidPrices: number[];
+    bidVolumes: number[];
+    askPrices: number[];
+    askVolumes: number[];
+    midPrice: number;
+    profitLoss: number;
+  }[] = [];
+
+  const tradesRows: {
+    day: number;
+    timestamp: number;
+    symbol: string;
+    buyer: string;
+    seller: string;
+    price: number;
+    quantity: number;
+  }[] = [];
+
+  for (const file of files) {
+    const text = await readFileAsText(file);
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) continue;
+
+    const header = lines[0].toLowerCase();
+
+    if (header.includes('mid_price')) {
+      // prices CSV: day;timestamp;product;bid_price_1;bid_volume_1;...;mid_price;profit_and_loss
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(';');
+        if (cols.length < 16) continue;
+
+        pricesRows.push({
+          day: Number(cols[0]),
+          timestamp: Number(cols[1]),
+          product: cols[2],
+          bidPrices: getColumnValues(cols, [3, 5, 7]),
+          bidVolumes: getColumnValues(cols, [4, 6, 8]),
+          askPrices: getColumnValues(cols, [9, 11, 13]),
+          askVolumes: getColumnValues(cols, [10, 12, 14]),
+          midPrice: Number(cols[15]),
+          profitLoss: Number(cols[16]) || 0,
+        });
+      }
+    } else if (header.includes('buyer')) {
+      // trades CSV: timestamp;buyer;seller;symbol;currency;price;quantity
+      // Need to extract day from filename (e.g. "prices_round_1_day_-2.csv" or "trades_round_1_day_-2.csv")
+      const dayMatch = file.name.match(/day_(-?\d+)/);
+      const day = dayMatch ? Number(dayMatch[1]) : 0;
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(';');
+        if (cols.length < 7) continue;
+
+        tradesRows.push({
+          day,
+          timestamp: Number(cols[0]),
+          buyer: cols[1],
+          seller: cols[2],
+          symbol: cols[3],
+          price: Number(cols[5]),
+          quantity: Number(cols[6]),
+        });
+      }
+    }
+  }
+
+  if (pricesRows.length === 0) {
+    throw new AlgorithmParseError(<Text>No prices CSV data found. Please include at least one prices CSV file.</Text>);
+  }
+
+  const days = [...new Set(pricesRows.map(r => r.day))].sort((a, b) => a - b);
+  const minDay = days[0];
+
+  const toNormalized = (day: number, timestamp: number) => (day - minDay) * 1_000_000 + timestamp;
+
+  // Build activityLogs
+  const activityLogs: ActivityLogRow[] = pricesRows.map(r => ({
+    day: r.day,
+    timestamp: toNormalized(r.day, r.timestamp),
+    product: r.product,
+    bidPrices: r.bidPrices,
+    bidVolumes: r.bidVolumes,
+    askPrices: r.askPrices,
+    askVolumes: r.askVolumes,
+    midPrice: r.midPrice,
+    profitLoss: r.profitLoss,
+  }));
+
+  // Group trades by normalizedTimestamp + symbol
+  const tradesByTimestamp = new Map<number, Map<string, Trade[]>>();
+  for (const t of tradesRows) {
+    const ts = toNormalized(t.day, t.timestamp);
+    if (!tradesByTimestamp.has(ts)) tradesByTimestamp.set(ts, new Map());
+    const bySymbol = tradesByTimestamp.get(ts)!;
+    if (!bySymbol.has(t.symbol)) bySymbol.set(t.symbol, []);
+    bySymbol.get(t.symbol)!.push({
+      symbol: t.symbol,
+      price: t.price,
+      quantity: t.quantity,
+      buyer: t.buyer,
+      seller: t.seller,
+      timestamp: ts,
+    });
+  }
+
+  // Group prices rows by normalizedTimestamp
+  const pricesByTimestamp = new Map<
+    number,
+    {
+      product: string;
+      bidPrices: number[];
+      bidVolumes: number[];
+      askPrices: number[];
+      askVolumes: number[];
+    }[]
+  >();
+  for (const r of pricesRows) {
+    const ts = toNormalized(r.day, r.timestamp);
+    if (!pricesByTimestamp.has(ts)) pricesByTimestamp.set(ts, []);
+    pricesByTimestamp.get(ts)!.push(r);
+  }
+
+  const sortedTimestamps = [...pricesByTimestamp.keys()].sort((a, b) => a - b);
+
+  const data: AlgorithmDataRow[] = sortedTimestamps.map(ts => {
+    const products = pricesByTimestamp.get(ts)!;
+
+    const listings: Record<ProsperitySymbol, Listing> = {};
+    const orderDepths: Record<ProsperitySymbol, OrderDepth> = {};
+
+    for (const p of products) {
+      listings[p.product] = { symbol: p.product, product: p.product, denomination: 'SEASHELLS' };
+
+      const buyOrders: Record<number, number> = {};
+      for (let i = 0; i < p.bidPrices.length; i++) {
+        buyOrders[p.bidPrices[i]] = p.bidVolumes[i];
+      }
+
+      const sellOrders: Record<number, number> = {};
+      for (let i = 0; i < p.askPrices.length; i++) {
+        sellOrders[p.askPrices[i]] = -p.askVolumes[i];
+      }
+
+      orderDepths[p.product] = { buyOrders, sellOrders };
+    }
+
+    const marketTrades: Record<ProsperitySymbol, Trade[]> = {};
+    const tradesAtTs = tradesByTimestamp.get(ts);
+    if (tradesAtTs) {
+      for (const [symbol, trades] of tradesAtTs) {
+        marketTrades[symbol] = trades;
+      }
+    }
+
+    return {
+      state: {
+        timestamp: ts,
+        traderData: '',
+        listings,
+        orderDepths,
+        ownTrades: {},
+        marketTrades,
+        position: {},
+        observations: { plainValueObservations: {}, conversionObservations: {} },
+      },
+      orders: {},
+      conversions: 0,
+      traderData: '',
+      algorithmLogs: '',
+      sandboxLogs: '',
+    };
+  });
+
+  return { activityLogs, data };
+}
+
 export async function getAlgorithmLogsUrl(algorithmId: string): Promise<string> {
   const urlResponse = await authenticatedAxios.get(
     `https://bz97lt8b1e.execute-api.eu-west-1.amazonaws.com/prod/submission/logs/${algorithmId}`,

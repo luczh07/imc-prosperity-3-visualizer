@@ -5,23 +5,8 @@ import { useStore } from '../../store.ts';
 import { Chart } from './Chart.tsx';
 
 function getLimit(algorithm: Algorithm, symbol: ProsperitySymbol): number {
-  const knownLimits: Record<string, number> = {
-    RAINFOREST_RESIN: 50,
-    KELP: 50,
-    SQUID_INK: 50,
-    CROISSANTS: 250,
-    JAMS: 350,
-    DJEMBES: 60,
-    PICNIC_BASKET1: 60,
-    PICNIC_BASKET2: 100,
-    VOLCANIC_ROCK: 400,
-    VOLCANIC_ROCK_VOUCHER_9500: 200,
-    VOLCANIC_ROCK_VOUCHER_9750: 200,
-    VOLCANIC_ROCK_VOUCHER_10000: 200,
-    VOLCANIC_ROCK_VOUCHER_10250: 200,
-    VOLCANIC_ROCK_VOUCHER_10500: 200,
-    MAGNIFICENT_MACARONS: 75,
-  };
+  // Add Prosperity 4 product limits here as they become known
+  const knownLimits: Record<string, number> = {};
 
   if (knownLimits[symbol] !== undefined) {
     return knownLimits[symbol];
